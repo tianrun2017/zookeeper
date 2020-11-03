@@ -681,6 +681,7 @@ public class Leader extends LearnerMaster {
                 return;
             }
 
+            //启动leader server
             startZkServer();
 
             /**

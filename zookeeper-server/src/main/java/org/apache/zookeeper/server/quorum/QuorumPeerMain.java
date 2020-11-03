@@ -80,6 +80,7 @@ public class QuorumPeerMain {
     protected QuorumPeer quorumPeer;
 
     /**
+     * ZK运行的入口
      * To start the replicated server specify the configuration file name on
      * the command line.
      * @param args path to the configfile
@@ -118,13 +119,24 @@ public class QuorumPeerMain {
         ServiceUtils.requestSystemExit(ExitCode.EXECUTION_FINISHED.getValue());
     }
 
+    /**
+     * 解析配置，如果传入的是配置文件(参数只有一个)，解析配置文件并初始化QuorumPeerConfig
+     * 启动清理文件的线程
+     * 判断是单机还是集群
+     * 集群：只有一个参数，并且配置了多个server
+     * 单机：上面的条件不满足，一般在启动的使用了以下两种配置的一种
+     * 使用的是文件配置，但是没有配置多台server
+     * 命令行配置多个（2-4）参数：port dataDir [tickTime] [maxClientCnxns]
+     */
     protected void initializeAndRun(String[] args) throws ConfigException, IOException, AdminServerException {
         QuorumPeerConfig config = new QuorumPeerConfig();
         if (args.length == 1) {
+            //如果传入参数只有一个，初始化QuorumPeerConfig
             config.parse(args[0]);
         }
 
         // Start and schedule the the purge task
+        //启动清理文件的线程
         DatadirCleanupManager purgeMgr = new DatadirCleanupManager(
             config.getDataDir(),
             config.getDataLogDir(),
@@ -133,8 +145,9 @@ public class QuorumPeerMain {
         purgeMgr.start();
 
         if (args.length == 1 && config.isDistributed()) {
+            //集群
             runFromConfig(config);
-        } else {
+        } else {//单机
             LOG.warn("Either no config or no quorum defined in config, running in standalone mode");
             // there is only server in the quorum -- run as standalone
             ZooKeeperServerMain.main(args);

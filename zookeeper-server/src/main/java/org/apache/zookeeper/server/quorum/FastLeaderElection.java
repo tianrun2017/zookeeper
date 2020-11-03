@@ -211,6 +211,7 @@ public class FastLeaderElection implements Election {
     protected class Messenger {
 
         /**
+         * QuorumPeer->start->startLeaderElection->createElectionAlgorithm->FastLeaderElection->starter->Messenger-WorkerReceiver
          * Receives messages from instance of QuorumCnxManager on
          * method run(), and processes such messages.
          */
@@ -226,6 +227,12 @@ public class FastLeaderElection implements Election {
                 this.manager = manager;
             }
 
+            /**
+             * 接收数据
+             *
+             * QuorumPeer->start->startLeaderElection->createElectionAlgorithm->FastLeaderElection->starter->Messenger->start->WorkerReceiver->run
+             */
+            @Override
             public void run() {
 
                 Message response;
@@ -470,12 +477,20 @@ public class FastLeaderElection implements Election {
             volatile boolean stop;
             QuorumCnxManager manager;
 
+            /**
+             * QuorumPeer->start->startLeaderElection->createElectionAlgorithm->FastLeaderElection->starter->Messenger->WorkerSender
+             * @param manager
+             */
             WorkerSender(QuorumCnxManager manager) {
                 super("WorkerSender");
                 this.stop = false;
                 this.manager = manager;
             }
 
+            /**
+             * QuorumPeer->start->startLeaderElection->createElectionAlgorithm->FastLeaderElection->starter->Messenger-start-WorkerSender->run
+             */
+            @Override
             public void run() {
                 while (!stop) {
                     try {
@@ -493,6 +508,8 @@ public class FastLeaderElection implements Election {
             }
 
             /**
+             * QuorumPeer->start->startLeaderElection->createElectionAlgorithm->FastLeaderElection->starter->Messenger-start-WorkerSender->run->process
+             *
              * Called by run() once there is a new message to send.
              *
              * @param m     message to send
@@ -506,23 +523,29 @@ public class FastLeaderElection implements Election {
 
         }
 
+        /**
+         * 这2个线程工作，目的：
+         */
         WorkerSender ws;
         WorkerReceiver wr;
         Thread wsThread = null;
         Thread wrThread = null;
 
         /**
+         * QuorumPeer->start->startLeaderElection->createElectionAlgorithm->FastLeaderElection->starter->Messenger
+         *
          * Constructor of class Messenger.
          *
          * @param manager   Connection manager
          */
         Messenger(QuorumCnxManager manager) {
-
+            //初始化工作发送线程
             this.ws = new WorkerSender(manager);
 
             this.wsThread = new Thread(this.ws, "WorkerSender[myid=" + self.getId() + "]");
             this.wsThread.setDaemon(true);
 
+            //初始化工作接收线程
             this.wr = new WorkerReceiver(manager);
 
             this.wrThread = new Thread(this.wr, "WorkerReceiver[myid=" + self.getId() + "]");
@@ -530,10 +553,13 @@ public class FastLeaderElection implements Election {
         }
 
         /**
+         * QuorumPeer->start->startLeaderElection->createElectionAlgorithm->FastLeaderElection->starter->Messenger-start
          * Starts instances of WorkerSender and WorkerReceiver
          */
         void start() {
+            //启动发送线程
             this.wsThread.start();
+            //启动接收线程
             this.wrThread.start();
         }
 
@@ -602,6 +628,8 @@ public class FastLeaderElection implements Election {
     }
 
     /**
+     * QuorumPeer->start->startLeaderElection->createElectionAlgorithm->FastLeaderElection
+     *
      * Constructor of FastLeaderElection. It takes two parameters, one
      * is the QuorumPeer object that instantiated this object, and the other
      * is the connection manager. Such an object should be created only once
@@ -617,6 +645,7 @@ public class FastLeaderElection implements Election {
     }
 
     /**
+     *
      * This method is invoked by the constructor. Because it is a
      * part of the starting procedure of the object that must be on
      * any constructor of this class, it is probably best to keep as
@@ -630,9 +659,11 @@ public class FastLeaderElection implements Election {
         this.self = self;
         proposedLeader = -1;
         proposedZxid = -1;
-
+        //初始化发送队列
         sendqueue = new LinkedBlockingQueue<ToSend>();
+        //初始化接收队列
         recvqueue = new LinkedBlockingQueue<Notification>();
+        //QuorumPeer->start->startLeaderElection->createElectionAlgorithm->FastLeaderElection->starter
         this.messenger = new Messenger(manager);
     }
 
@@ -905,7 +936,9 @@ public class FastLeaderElection implements Election {
 
         self.start_fle = Time.currentElapsedTime();
         try {
-            /*
+            /**
+             * 投票箱
+             *
              * The votes from the current leader election are stored in recvset. In other words, a vote v is in recvset
              * if v.electionEpoch == logicalclock. The current participant uses recvset to deduce on whether a majority
              * of participants has voted for it.
@@ -970,7 +1003,7 @@ public class FastLeaderElection implements Election {
                      * voting view for a replica in the current or next voting view.
                      */
                     switch (n.state) {
-                    case LOOKING:
+                    case LOOKING://查找选举领导中
                         if (getInitLastLoggedZxid() == -1) {
                             LOG.debug("Ignoring notification as our zxid is -1");
                             break;
@@ -980,23 +1013,32 @@ public class FastLeaderElection implements Election {
                             break;
                         }
                         // If notification > current, replace and send messages out
+                        //如果收到选票大于当前自己的，设置为最新大选票
                         if (n.electionEpoch > logicalclock.get()) {
                             logicalclock.set(n.electionEpoch);
+                            //清空投票箱
                             recvset.clear();
                             if (totalOrderPredicate(n.leader, n.zxid, n.peerEpoch, getInitId(), getInitLastLoggedZxid(), getPeerEpoch())) {
+                                //就像选择优秀领导一样，如果n是更优秀的领导，就改选为他
                                 updateProposal(n.leader, n.zxid, n.peerEpoch);
                             } else {
+                                //否则设置当前自己为领导
                                 updateProposal(getInitId(), getInitLastLoggedZxid(), getPeerEpoch());
                             }
+                            //通知其他节点
                             sendNotifications();
                         } else if (n.electionEpoch < logicalclock.get()) {
+                            //如果收到选票小于当前自己的，直接忽略
                                 LOG.debug(
                                     "Notification election epoch is smaller than logicalclock. n.electionEpoch = 0x{}, logicalclock=0x{}",
                                     Long.toHexString(n.electionEpoch),
                                     Long.toHexString(logicalclock.get()));
                             break;
                         } else if (totalOrderPredicate(n.leader, n.zxid, n.peerEpoch, proposedLeader, proposedZxid, proposedEpoch)) {
+                            //如果选票相投
+                            //比较哪个优秀，就像选择优秀领导一样，如果n是更优秀的领导，就改选为他
                             updateProposal(n.leader, n.zxid, n.peerEpoch);
+                            //通知其他节点
                             sendNotifications();
                         }
 

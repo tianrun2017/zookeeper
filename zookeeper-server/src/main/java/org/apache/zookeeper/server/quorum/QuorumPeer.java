@@ -431,10 +431,17 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
     }
 
+    /**
+     * 服务状态
+     */
     public enum ServerState {
+        //处于looking选举状态，集群正在进行投票选举
         LOOKING,
+        //处于following状态，当前server的角色是follower
         FOLLOWING,
+        //处于leading状态，当前server角色是leader
         LEADING,
+        //处于observing状态，当前server角色是observer
         OBSERVING
     }
 
@@ -469,7 +476,9 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
      * conditions change (e.g. which state to become after LOOKING).
      */
     public enum LearnerType {
+        //参与选举的
         PARTICIPANT,
+        //观察者，不参与选举
         OBSERVER
     }
 
@@ -566,6 +575,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
     /**
      * This is who I think the leader currently is.
+     * 我认为这就是目前的领导者
      */
     private volatile Vote currentVote;
 
@@ -1023,6 +1033,9 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         return quorumStats;
     }
 
+    /**
+     * QuorumPeer
+     */
     @Override
     public synchronized void start() {
         if (!getView().containsKey(myid)) {
@@ -1036,6 +1049,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
             LOG.warn("Problem starting AdminServer", e);
             System.out.println(e);
         }
+        // 开始选举
         startLeaderElection();
         startJvmPauseMonitor();
         super.start();
@@ -1100,9 +1114,15 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         responder.running = false;
         responder.interrupt();
     }
+
+    /**
+     * QuorumPeer-start-startLeaderElection
+     * 开始领导选举
+     */
     public synchronized void startLeaderElection() {
         try {
             if (getPeerState() == ServerState.LOOKING) {
+                //当前领导
                 currentVote = new Vote(myid, getLastLoggedZxid(), getCurrentEpoch());
             }
         } catch (IOException e) {
@@ -1111,6 +1131,8 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
             throw re;
         }
 
+        //QuorumPeer->start->startLeaderElection->createElectionAlgorithm->
+        // 选举算法,electionType=3
         this.electionAlg = createElectionAlgorithm(electionType);
     }
 
@@ -1220,6 +1242,12 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         return new Observer(this, new ObserverZooKeeperServer(logFactory, this, this.zkDb));
     }
 
+    /**
+     * QuorumPeer->start->startLeaderElection->createElectionAlgorithm->
+     * 选举算法 FastLeaderElection
+     * @param electionAlgorithm 默认为3
+     * @return
+     */
     @SuppressWarnings("deprecation")
     protected Election createElectionAlgorithm(int electionAlgorithm) {
         Election le = null;
@@ -1233,16 +1261,23 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
             le = new AuthFastLeaderElection(this, true);
             break;
         case 3:
+            //QuorumPeer->start->startLeaderElection->createElectionAlgorithm->createCnxnManager
+            //这里会初始化创建listener监听线程
             QuorumCnxManager qcm = createCnxnManager();
+            ///q1->2->2
             QuorumCnxManager oldQcm = qcmRef.getAndSet(qcm);
             if (oldQcm != null) {
                 LOG.warn("Clobbering already-set QuorumCnxManager (restarting leader election?)");
                 oldQcm.halt();
             }
+            //q1->2->3
             QuorumCnxManager.Listener listener = qcm.listener;
             if (listener != null) {
+                //运行监听线程（包括socket连接，接收和发送数据工作线程）
                 listener.start();
+                //初始化选举
                 FastLeaderElection fle = new FastLeaderElection(this, qcm);
+                //开始选举
                 fle.start();
                 le = fle;
             } else {
@@ -2456,6 +2491,10 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         return quorumLearnerSaslAuthRequired;
     }
 
+    /**
+     * QuorumPeer->start->startLeaderElection->createElectionAlgorithm->createCnxnManager
+     * @return
+     */
     public QuorumCnxManager createCnxnManager() {
         int timeout = quorumCnxnTimeoutMs > 0 ? quorumCnxnTimeoutMs : this.tickTime * this.syncLimit;
         LOG.info("Using {}ms as the quorum cnxn socket timeout", timeout);

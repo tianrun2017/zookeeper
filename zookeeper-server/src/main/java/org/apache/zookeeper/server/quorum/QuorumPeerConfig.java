@@ -94,6 +94,7 @@ public class QuorumPeerConfig {
     protected int initLimit;
     protected int syncLimit;
     protected int connectToLearnerMasterLimit;
+    //默认开始选举算法
     protected int electionAlg = 3;
     protected int electionPort = 2182;
     protected boolean quorumListenOnAllIPs = false;

@@ -266,10 +266,14 @@ public class QuorumCnxManager {
 
     }
 
+    /**
+     * QuorumPeer->start->startLeaderElection->createElectionAlgorithm->createCnxnManager->QuorumCnxManager
+     */
     public QuorumCnxManager(QuorumPeer self, final long mySid, Map<Long, QuorumPeer.QuorumServer> view,
         QuorumAuthServer authServer, QuorumAuthLearner authLearner, int socketTimeout, boolean listenOnAllIPs,
         int quorumCnxnThreadsSize, boolean quorumSaslAuthEnabled) {
 
+        //初始化接收队列
         this.recvQueue = new CircularBlockingQueue<>(RECV_CAPACITY);
         this.queueSendMap = new ConcurrentHashMap<>();
         this.senderWorkerMap = new ConcurrentHashMap<>();
@@ -290,6 +294,8 @@ public class QuorumCnxManager {
         initializeAuth(mySid, authServer, authLearner, quorumCnxnThreadsSize, quorumSaslAuthEnabled);
 
         // Starts listener thread that waits for connection requests
+        //QuorumPeer->start->startLeaderElection->createElectionAlgorithm->createCnxnManager->QuorumCnxManager
+        // 开启一个监听器线程
         listener = new Listener();
         listener.setName("QuorumPeerListener");
     }
@@ -528,7 +534,7 @@ public class QuorumCnxManager {
 
         try {
             protocolVersion = din.readLong();
-            if (protocolVersion >= 0) { // this is a server id and not a protocol version
+            if (protocolVersion >= 0) { // this is a server id and not a protocol version 是服务ID（myId）
                 sid = protocolVersion;
             } else {
                 try {
@@ -558,12 +564,14 @@ public class QuorumCnxManager {
 
         // do authenticating learner
         authServer.authenticate(sock, din);
-        //If wins the challenge, then close the new connection.
+        //If wins the challenge, then close the new connection.如果赢得挑战，则关闭新连接
         if (sid < self.getId()) {
+            //如果接收到的sid比当前自己的sid还小，我们需要关闭这个socket,从新连接（规定了，只能大sid连接小的sid，不能小的SID连接大的SID,理论上socket可以双向连接的，不然乱套了）
             /*
              * This replica might still believe that the connection to sid is
              * up, so we have to shut down the workers before trying to open a
              * new connection.
+             * 此复制副本可能仍然认为与sid的连接已启动，因此在尝试打开新连接之前，我们必须关闭工作线程
              */
             SendWorker sw = senderWorkerMap.get(sid);
             if (sw != null) {
@@ -572,6 +580,7 @@ public class QuorumCnxManager {
 
             /*
              * Now we start a new connection
+             * 创建新连接之前，关闭老的
              */
             LOG.debug("Create new connection to server: {}", sid);
             closeSocket(sock);
@@ -583,6 +592,9 @@ public class QuorumCnxManager {
             }
 
         } else { // Otherwise start worker threads to receive data.
+            //如果接收到的sid比当前自己的sid还大,
+            //开始工作线程 处理接收和发送数据
+            //注意：发送，和接收工作线程相互引用，代码看起来比较头大
             SendWorker sw = new SendWorker(sock, sid);
             RecvWorker rw = new RecvWorker(sock, din, sid, sw);
             sw.setRecv(rw);
@@ -867,7 +879,10 @@ public class QuorumCnxManager {
         private List<ListenerHandler> listenerHandlers;
         private final AtomicBoolean socketException;
 
-
+        /**
+         * QuorumPeer->start->startLeaderElection->createElectionAlgorithm->createCnxnManager->QuorumCnxManager->Listener
+         * 开启一个监听器
+         */
         public Listener() {
             // During startup of thread, thread name will be overridden to
             // specific election address
@@ -899,11 +914,16 @@ public class QuorumCnxManager {
             this.socketBindErrorHandler = errorHandler;
         }
 
+        /**
+         * QuorumPeer->start->startLeaderElection->createElectionAlgorithm->createCnxnManager->QuorumCnxManager->Listener-run
+         * 开启一个监听器
+         */
         @Override
         public void run() {
             if (!shutdown) {
                 Set<InetSocketAddress> addresses;
 
+                //这里应该是获取集群所有服务地址（zk选举和数据同步socket应该不是同一个）
                 if (self.getQuorumListenOnAllIPs()) {
                     addresses = self.getElectionAddress().getWildcardAddresses();
                 } else {
@@ -911,6 +931,8 @@ public class QuorumCnxManager {
                 }
 
                 CountDownLatch latch = new CountDownLatch(addresses.size());
+
+                // 为每个地址创建一个监听处理器（负责建立server-socket选举连接）
                 listenerHandlers = addresses.stream().map(address ->
                                 new ListenerHandler(address, self.shouldUsePortUnification(), self.isSslQuorum(), latch))
                         .collect(Collectors.toList());
@@ -919,6 +941,7 @@ public class QuorumCnxManager {
                 listenerHandlers.forEach(executor::submit);
 
                 try {
+                    //等待所有连接建立完成
                     latch.await();
                 } catch (InterruptedException ie) {
                     LOG.error("Interrupted while sleeping. Ignoring exception", ie);
@@ -967,6 +990,10 @@ public class QuorumCnxManager {
             }
         }
 
+        /**
+         * 监听处理器线程：启动选举服务端口，开始接收连接
+         * 选举会单独建立一个socket连接
+         */
         class ListenerHandler implements Runnable, Closeable {
             private ServerSocket serverSocket;
             private InetSocketAddress address;
@@ -974,6 +1001,9 @@ public class QuorumCnxManager {
             private boolean sslQuorum;
             private CountDownLatch latch;
 
+            /**
+             * QuorumPeer->start->startLeaderElection->createElectionAlgorithm->createCnxnManager->QuorumCnxManager->Listener-run->ListenerHandler
+             */
             ListenerHandler(InetSocketAddress address, boolean portUnification, boolean sslQuorum,
                             CountDownLatch latch) {
                 this.address = address;
@@ -984,11 +1014,13 @@ public class QuorumCnxManager {
 
             /**
              * Sleeps on acceptConnections().
+             * QuorumPeer->start->startLeaderElection->createElectionAlgorithm->createCnxnManager->QuorumCnxManager->Listener-run->ListenerHandler->run
              */
             @Override
             public void run() {
                 try {
                     Thread.currentThread().setName("ListenerHandler-" + address);
+                    // 异步线程，创建socket服务连接
                     acceptConnections();
                     try {
                         close();
@@ -1012,6 +1044,8 @@ public class QuorumCnxManager {
             }
 
             /**
+             * QuorumPeer->start->startLeaderElection->createElectionAlgorithm->createCnxnManager->QuorumCnxManager->Listener-run->ListenerHandler->run->acceptConnections
+             * 创建选举server-socket连接，接收数据
              * Sleeps on accept().
              */
             private void acceptConnections() {
@@ -1020,10 +1054,12 @@ public class QuorumCnxManager {
 
                 while ((!shutdown) && (portBindMaxRetry == 0 || numRetries < portBindMaxRetry)) {
                     try {
+                        //创建连接
                         serverSocket = createNewServerSocket();
                         LOG.info("My election bind port: {}", address.toString());
                         while (!shutdown) {
                             try {
+                                //阻塞接收连接
                                 client = serverSocket.accept();
                                 setSockOpts(client);
                                 LOG.info("Received connection request {}", client.getRemoteSocketAddress());
@@ -1032,6 +1068,7 @@ public class QuorumCnxManager {
                                 // enabled. This is required because sasl server
                                 // authentication process may take few seconds to finish,
                                 // this may delay next peer connection requests.
+                                //一旦有连接接入，开始接收数据处理：什么数据还不知道，等下在看？？？
                                 if (quorumSaslAuthEnabled) {
                                     receiveConnectionAsync(client);
                                 } else {
@@ -1076,6 +1113,11 @@ public class QuorumCnxManager {
                 }
             }
 
+            /**
+             * 创建服务连接
+             * @return
+             * @throws IOException
+             */
             private ServerSocket createNewServerSocket() throws IOException {
                 ServerSocket socket;
 
@@ -1417,6 +1459,8 @@ public class QuorumCnxManager {
     }
 
     /**
+     * QuorumPeer->start->startLeaderElection->createElectionAlgorithm->FastLeaderElection->starter->Messenger->start->WorkerReceiver->run->pollRecvQueue
+     *
      * Retrieves and removes a message at the head of this queue,
      * waiting up to the specified wait time if necessary for an element to
      * become available.

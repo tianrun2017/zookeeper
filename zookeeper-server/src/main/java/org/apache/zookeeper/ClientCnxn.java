@@ -142,11 +142,13 @@ public class ClientCnxn {
     private final CopyOnWriteArraySet<AuthData> authInfo = new CopyOnWriteArraySet<AuthData>();
 
     /**
+     * PACKET已经发送消息，等待响应队列
      * These are the packets that have been sent and are waiting for a response.
      */
     private final Queue<Packet> pendingQueue = new ArrayDeque<>();
 
     /**
+     * 需要发送packets消息队列
      * These are the packets that need to be sent.
      */
     private final LinkedBlockingDeque<Packet> outgoingQueue = new LinkedBlockingDeque<Packet>();
@@ -861,6 +863,9 @@ public class ClientCnxn {
         private Random r = new Random();
         private boolean isFirstConnect = true;
 
+        /**
+         * 处理响应结果
+         */
         void readResponse(ByteBuffer incomingBuffer) throws IOException {
             ByteBufferInputStream bbis = new ByteBufferInputStream(incomingBuffer);
             BinaryInputArchive bbia = BinaryInputArchive.getArchive(bbis);
@@ -980,6 +985,7 @@ public class ClientCnxn {
         }
 
         /**
+         * 在建立socket连接,需要建立session会话
          * Setup session, previous watches, authentication.
          */
         void primeConnection() throws IOException {
@@ -998,8 +1004,11 @@ public class ClientCnxn {
                 List<String> dataWatches = zooKeeper.getDataWatches();
                 List<String> existWatches = zooKeeper.getExistWatches();
                 List<String> childWatches = zooKeeper.getChildWatches();
+                //持久观察
                 List<String> persistentWatches = zooKeeper.getPersistentWatches();
+                //持久递归观察
                 List<String> persistentRecursiveWatches = zooKeeper.getPersistentRecursiveWatches();
+
                 if (!dataWatches.isEmpty() || !existWatches.isEmpty() || !childWatches.isEmpty()
                         || !persistentWatches.isEmpty() || !persistentRecursiveWatches.isEmpty()) {
                     Iterator<String> dataWatchesIter = prependChroot(dataWatches).iterator();

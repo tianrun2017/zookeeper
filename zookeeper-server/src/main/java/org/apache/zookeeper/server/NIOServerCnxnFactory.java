@@ -644,6 +644,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         // interval passed into the ExpiryQueue() constructor below should be
         // less than or equal to the timeout.
         cnxnExpiryQueue = new ExpiryQueue<NIOServerCnxn>(sessionlessCnxnTimeout);
+        //检查和关闭过期超时连接线程
         expirerThread = new ConnectionExpirerThread();
 
         int numCores = Runtime.getRuntime().availableProcessors();
@@ -665,6 +666,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
             + (directBufferBytes == 0 ? "gathered writes." : ("" + (directBufferBytes / 1024) + " kB direct buffers."));
         LOG.info(logMsg);
         for (int i = 0; i < numSelectorThreads; ++i) {
+            //添加多个连接处理读写操作线程
             selectorThreads.add(new SelectorThread(i));
         }
 
@@ -677,7 +679,9 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         } else {
             ss.socket().bind(addr, listenBacklog);
         }
+        //NIO非阻塞
         ss.configureBlocking(false);
+        //创建接收连接线程
         acceptThread = new AcceptThread(ss, addr, selectorThreads);
     }
 
@@ -736,12 +740,14 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         if (workerPool == null) {
             workerPool = new WorkerService("NIOWorker", numWorkerThreads, false);
         }
+        //启动多个selector线程处理读写操作
         for (SelectorThread thread : selectorThreads) {
             if (thread.getState() == Thread.State.NEW) {
                 thread.start();
             }
         }
         // ensure thread is started once and only once
+        //启动接收连接线程
         if (acceptThread.getState() == Thread.State.NEW) {
             acceptThread.start();
         }
